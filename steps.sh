@@ -19,7 +19,7 @@ KEYMP="us"
 KEYMOD="pc105"
 # pc105 and pc104 are modern standards, all others need to be researched
 
-MYUSERNM="live"
+MYUSERNM="password="live""
 # use all lowercase letters only
 
 MYUSRPASSWD="live"
@@ -69,24 +69,29 @@ pacman -S --needed --noconfirm archiso mkinitcpio-archiso
 mkdir -p ./ezreleng/airootfs/etc/xdg/autostart
 ln -sf /usr/lib/polkit-kde-authentication-agent-1 ./ezreleng/airootfs/etc/xdg/autostart/
 
-# Create the necessary directory if it doesn't exist
-mkdir -p ./ezreleng/airootfs/etc/systemd/system/display-manager.service
+# Ensure systemd unit parent dir exists and no directory named
+# display-manager.service is present (that breaks linking)
+mkdir -p ./ezreleng/airootfs/etc/systemd/system
+if [ -d ./ezreleng/airootfs/etc/systemd/system/display-manager.service ]; then
+  rm -rf ./ezreleng/airootfs/etc/systemd/system/display-manager.service
+fi
 
-# Create the symlink that tells systemd to use sddm as the display manager
-ln -sf /usr/lib/systemd/system/sddm.service ./ezreleng/airootfs/etc/systemd/system/display-manager.service
+# Note: do not attempt to enable SDDM yet — the airootfs may not be
+# populated with /usr and unit files at this point.  We'll enable SDDM
+# after the build tree is copied (see enable_sddm_postpopulate()).
 }
 
 # Copy ezreleng to working directory
 cpezreleng () {
-cp -r /usr/share/archiso/configs/releng/ ./ezreleng
-rm ./ezreleng/airootfs/etc/motd
-rm ./ezreleng/airootfs/etc/mkinitcpio.d/linux.preset
-rm ./ezreleng/airootfs/etc/ssh/sshd_config.d/10-archiso.conf
-rm -r ./ezreleng/grub
-rm -r ./ezreleng/efiboot
-rm -r ./ezreleng/syslinux
-rm -r ./ezreleng/airootfs/etc/xdg
-rm -r ./ezreleng/airootfs/etc/mkinitcpio.conf.d
+cp -rf /usr/share/archiso/configs/releng/ ./ezreleng
+rm -rf ./ezreleng/airootfs/etc/motd
+rm -rf ./ezreleng/airootfs/etc/mkinitcpio.d/linux.preset
+rm -rf ./ezreleng/airootfs/etc/ssh/sshd_config.d/10-archiso.conf
+rm -rf ./ezreleng/grub
+rm -rf ./ezreleng/efiboot
+rm -rf ./ezreleng/syslinux
+rm -rf ./ezreleng/airootfs/etc/xdg
+rm -rf ./ezreleng/airootfs/etc/mkinitcpio.conf.d
 }
 
 # Copy ezrepo to opt
@@ -137,7 +142,8 @@ ln -sf /usr/lib/systemd/system/haveged.service ./ezreleng/airootfs/etc/systemd/s
 ln -sf /usr/lib/systemd/system/cups.service ./ezreleng/airootfs/etc/systemd/system/printer.target.wants/cups.service
 ln -sf /usr/lib/systemd/system/cups.socket ./ezreleng/airootfs/etc/systemd/system/sockets.target.wants/cups.socket
 ln -sf /usr/lib/systemd/system/cups.path ./ezreleng/airootfs/etc/systemd/system/multi-user.target.wants/cups.path
-ln -sf /usr/lib/systemd/system/sddm.service ./ezreleng/airootfs/etc/systemd/system/display-manager.service
+    # ensure parent dir exists; SDDM enablement is performed later
+    mkdir -p ./ezreleng/airootfs/etc/systemd/system
 ln -sf /usr/lib/systemd/system/graphical.target ./ezreleng/airootfs/etc/systemd/system/default.target
 }
 
@@ -254,15 +260,40 @@ runmkarchiso () {
 mkarchiso -v -w ./work -o ./out ./ezreleng
 }
 
+# After the build tree is copied into ./ezreleng/airootfs, enable SDDM
+# by creating the expected systemd unit symlinks inside the airootfs.
+enable_sddm_postpopulate () {
+  # ensure parent dir and remove any mistakenly-created directory
+  mkdir -p ./ezreleng/airootfs/etc/systemd/system
+  if [ -d ./ezreleng/airootfs/etc/systemd/system/display-manager.service ]; then
+    rm -rf ./ezreleng/airootfs/etc/systemd/system/display-manager.service
+  fi
+
+  # Prefer unit inside the airootfs; fall back to build-host paths
+  if [ -f ./ezreleng/airootfs/usr/lib64/systemd/system/sddm.service ]; then
+    SDDM_UNIT="/usr/lib64/systemd/system/sddm.service"
+  elif [ -f ./ezreleng/airootfs/usr/lib/systemd/system/sddm.service ]; then
+    SDDM_UNIT="/usr/lib/systemd/system/sddm.service"
+  elif [ -f /usr/lib64/systemd/system/sddm.service ]; then
+    SDDM_UNIT="/usr/lib64/systemd/system/sddm.service"
+  else
+    SDDM_UNIT="/usr/lib/systemd/system/sddm.service"
+  fi
+
+  ln -sf "$SDDM_UNIT" ./ezreleng/airootfs/etc/systemd/system/display-manager.service
+  mkdir -p ./ezreleng/airootfs/etc/systemd/system/graphical.target.wants
+  ln -sf "$SDDM_UNIT" ./ezreleng/airootfs/etc/systemd/system/graphical.target.wants/sddm.service
+}
+
 # ----------------------------------------
 # Run Functions
 # ----------------------------------------
 
 rootuser
 handlerror
-prepreqs
-cleanup
-cpezreleng
+cleanup        # 1. Start by deleting old failed builds
+cpezreleng     # 2. CREATE the folder structure FIRST
+prepreqs       # 3. Now add links/directories to that structure
 addnmlinks
 cpezrepo
 rmunitsd
@@ -276,8 +307,12 @@ crtgshadow
 setkeylayout
 crtkeyboard
 crtlocalec
+# Enable SDDM now that cpmyfiles has copied /usr and unit files into the airootfs
+enable_sddm_postpopulate
 runmkarchiso
 rmezrepo
+
+# (enable_sddm_postpopulate is defined above and called before mkarchiso)
 
 
 
