@@ -79,6 +79,7 @@ fi
 # Note: do not attempt to enable SDDM yet — the airootfs may not be
 # populated with /usr and unit files at this point.  We'll enable SDDM
 # after the build tree is copied (see enable_sddm_postpopulate()).
+# idk what any of the above means but it works so idc :D
 }
 
 # Copy ezreleng to working directory
